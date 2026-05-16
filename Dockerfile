@@ -4,7 +4,7 @@ FROM python:3.11-slim
 # Set working directory inside container
 WORKDIR /app
 
-# Copy dependencies first (Docker caches this layer)
+# Copy dependencies first 
 # If requirements.txt doesn't change, pip install is cached
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
