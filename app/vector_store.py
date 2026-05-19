@@ -17,8 +17,12 @@ class VectorStore:
         self.client = QdrantClient(
             url=os.getenv("QDRANT_URL"),
             api_key=os.getenv("QDRANT_API_KEY"),
+            timeout=30,
         )
-        self._ensure_collection()
+        try:
+            self._ensure_collection()
+        except Exception as e:
+            print(f"WARNING: Qdrant connection issue on startup: {e}")
 
     def _ensure_collection(self):
         collections = [c.name for c in self.client.get_collections().collections]
@@ -53,17 +57,64 @@ class VectorStore:
 
     def search(self, query_vector: list, top_k: int = 5) -> list:
         print("--- SEARCH CALLED ---")
-        try:
-            results = self.client.search(
-                collection_name=COLLECTION_NAME,
-                query_vector=query_vector,
-                limit=top_k,
-                with_payload=True,
-            )
-            print(f"search SUCCESS, results: {len(results)}")
-        except Exception as e:
-            print(f"search FAILED: {str(e)}")
-            raise e
+
+        results = None
+
+        # Try new API first (qdrant-client >= 1.7.0)
+        if hasattr(self.client, 'query_points'):
+            try:
+                response = self.client.query_points(
+                    collection_name=COLLECTION_NAME,
+                    query=query_vector,
+                    limit=top_k,
+                    with_payload=True,
+                )
+                results = response.points
+                print(f"query_points SUCCESS: {len(results)} results")
+            except Exception as e:
+                print(f"query_points failed: {e}")
+                results = None
+
+        # Fallback to old API (qdrant-client < 1.7.0)
+        if results is None and hasattr(self.client, 'search'):
+            try:
+                results = self.client.search(
+                    collection_name=COLLECTION_NAME,
+                    query_vector=query_vector,
+                    limit=top_k,
+                    with_payload=True,
+                )
+                print(f"search SUCCESS: {len(results)} results")
+            except Exception as e:
+                print(f"search failed: {e}")
+                results = None
+
+        # Last resort — use REST API directly
+        if results is None:
+            try:
+                import requests as req
+                url = f"{os.getenv('QDRANT_URL')}/collections/{COLLECTION_NAME}/points/search"
+                headers = {"api-key": os.getenv("QDRANT_API_KEY"), "Content-Type": "application/json"}
+                payload = {"vector": query_vector, "limit": top_k, "with_payload": True}
+                resp = req.post(url, json=payload, headers=headers)
+                data = resp.json()
+                results = data.get("result", [])
+                print(f"REST API SUCCESS: {len(results)} results")
+
+                contexts = []
+                for r in results:
+                    payload_data = r.get("payload", {})
+                    contexts.append({
+                        "parent_content": payload_data.get("parent_content", ""),
+                        "source": payload_data.get("source", "unknown"),
+                        "page": payload_data.get("page_num", 0),
+                        "score": round(r.get("score", 0), 3),
+                        "child_text": payload_data.get("text", ""),
+                    })
+                return contexts
+            except Exception as e:
+                print(f"REST API failed: {e}")
+                raise Exception("All search methods failed")
 
         contexts = []
         for r in results:
