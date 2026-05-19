@@ -9,7 +9,7 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-API_URL = "http://127.0.0.1:8000" 
+API_URL = "https://doc-intelligence-r2kv.onrender.com"
 
 # ---- 2. STATE MANAGEMENT ----
 if "messages" not in st.session_state:
